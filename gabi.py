@@ -782,7 +782,8 @@ elif menu == "🎬 Renderizador Individual":
     vozes_disponiveis = {
         "Voz da Erica": "7f63edf2ac5f4e538992b065f5a20ce6",
         "Voz do Jean": "8d8c7204f55f440abf975500590c3c12",
-        "Voz do Matheus": "8a7a95ba239d4475afcad5dbebb24a48"
+        "Voz do Matheus": "8a7a95ba239d4475afcad5dbebb24a48",
+        "Voz da Gabi": "5cc1210e45a549a3971e003e85061777"
     }
     
     voz_selecionada = st.selectbox("Selecione a Voz para a Narração", list(vozes_disponiveis.keys()))
@@ -850,7 +851,8 @@ elif menu == "🏭 Renderização em Massa":
     vozes_disponiveis = {
         "Voz da Erica": "7f63edf2ac5f4e538992b065f5a20ce6",
         "Voz do Jean": "8d8c7204f55f440abf975500590c3c12",
-        "Voz do Matheus": "8a7a95ba239d4475afcad5dbebb24a48"
+        "Voz do Matheus": "8a7a95ba239d4475afcad5dbebb24a48",
+        "Voz da Gabi": "5cc1210e45a549a3971e003e85061777"
     }
     
     voz_selecionada = st.selectbox("Selecione a Voz para a Narração", list(vozes_disponiveis.keys()))
