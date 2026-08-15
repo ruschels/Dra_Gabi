@@ -62,12 +62,10 @@ def chamar_gemini_com_retry(prompt, max_tentativas_por_modelo=3, delay_segundos=
     
     client = genai.Client(api_key=API_GEMINI)
     
-    # Cria uma caixa reservada na tela do Streamlit para o log dinâmico
     log_container = st.empty()
     
     for modelo in modelos_fallback:
         for tentativa in range(max_tentativas_por_modelo):
-            # Atualiza o log visual em tempo real (fundo azul)
             log_container.info(f"🔄 Tentando conectar ao modelo: **{modelo}** (Tentativa {tentativa + 1}/{max_tentativas_por_modelo})...")
             
             try:
@@ -77,27 +75,23 @@ def chamar_gemini_com_retry(prompt, max_tentativas_por_modelo=3, delay_segundos=
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
                 
-                # Se der certo, substitui o log por uma mensagem de sucesso (fundo verde)
                 log_container.success(f"✅ Sucesso! O modelo **{modelo}** processou a requisição e retornou os dados.")
                 return response.text
                 
             except Exception as e:
                 erro_str = str(e)
-                # Se for erro de demanda/sobrecarga (503 ou 429)
                 if "503" in erro_str or "429" in erro_str:
                     log_container.warning(f"⚠️ **{modelo}** sobrecarregado. Aguardando {delay_segundos}s para tentar de novo...")
                     if tentativa < max_tentativas_por_modelo - 1:
                         time.sleep(delay_segundos)
                         continue
                     else:
-                        break # Acabaram as tentativas, vai pular para o próximo modelo da lista
+                        break 
                 else:
-                    # Se for qualquer outro erro (ex: nome do modelo inválido), mostra o erro e pula para o próximo modelo
                     log_container.error(f"❌ Erro no **{modelo}**: {erro_str[:80]}... Pulando para o próximo.")
-                    time.sleep(2) # Pausa rápida só para você conseguir ler o erro na tela
+                    time.sleep(2) 
                     break 
                     
-    # Se esgotar todos os modelos da lista
     log_container.error("❌ Todos os modelos falharam. A rede da IA está completamente congestionada.")
     raise Exception(f"Falha de conexão em todas as rotas. Tente novamente mais tarde.")
 
@@ -129,8 +123,10 @@ def normalizar_texto(texto):
     return re.sub(r'[^\w\s]', '', texto).strip().lower()
 
 def gerar_audio_fishaudio(texto, dicionario_global, output_path, api_key, voice_id="8d8c7204f55f440abf975500590c3c12"):
+    # Aplica o dicionário fonético antes de enviar para a IA
     for orig, fon in dicionario_global.items(): 
-        texto = texto.replace(orig, fon)
+        # Usa um regex para substituir apenas a palavra inteira e não pedaços de outras palavras
+        texto = re.sub(rf'\b{re.escape(orig)}\b', fon, texto)
         
     url = "https://api.fish.audio/v1/tts"
     headers = {
@@ -265,7 +261,6 @@ def render_keyword_video(script_data, audio_path, output_path, config_visual, de
                 caminho_fonte = os.path.join("fonts", nome_fonte)
                 font_kw = ImageFont.truetype(caminho_fonte, tamanho_fonte)
         except Exception as e:
-            print(f"⚠️ Erro ao carregar a fonte {nome_fonte}: {e}")
             font_kw = ImageFont.load_default()
             
         temp_img = Image.new('RGBA', (1080, 500), (0,0,0,0))
@@ -348,7 +343,6 @@ def render_keyword_video(script_data, audio_path, output_path, config_visual, de
     video = VideoClip(make_frame, duration=duration)
     video = video.set_audio(audio_clip)
     
-    # Reduzido para threads=2 para evitar crash no Streamlit Cloud
     video.write_videofile(
         output_path, 
         fps=24, 
@@ -372,7 +366,6 @@ st.sidebar.success("✅ Chaves de API Integradas")
 st.sidebar.markdown("---")
 st.sidebar.header("🎨 Customização Visual")
 
-# Lógica Dinâmica de Busca de Fontes
 fontes_disponiveis = [f for f in os.listdir("fonts") if f.lower().endswith(('.ttf', '.otf'))]
 if not fontes_disponiveis:
     fontes_disponiveis = ["Padrão do Sistema"]
@@ -398,6 +391,7 @@ configuracoes_visuais = {
 st.sidebar.markdown("---")
 menu = st.sidebar.radio("Navegação", [
     "📖 Base de Conhecimento", 
+    "🗣️ Dicionário Fonético",
     "📁 Gerenciador de Mídias", 
     "✍️ Gerador de Roteiros (Palavras-chave)", 
     "🃏 Gerador de Flashcards",
@@ -410,7 +404,6 @@ menu = st.sidebar.radio("Navegação", [
 if menu == "📖 Base de Conhecimento":
     st.header("🧠 Base de Conhecimento Estruturada")
     
-    # --- UPLOAD E EXTRAÇÃO ---
     st.subheader("1. Ingerir novo material (PDF)")
     materia_nome = st.text_input("Nome da Matéria (ex: Direito Previdenciário)")
     uploaded_file = st.file_uploader("Envie o PDF (A IA vai ler e separar por tópicos)", type="pdf")
@@ -441,13 +434,10 @@ if menu == "📖 Base de Conhecimento":
                     if materia_nome not in kb:
                         kb[materia_nome] = {}
                     
-                    # Itera sobre os novos tópicos para somar ou criar
                     for topico, novo_conteudo in topicos_extraidos.items():
                         if topico in kb[materia_nome]:
-                            # Se o assunto já existe, adiciona uma quebra de linha e soma o novo conteúdo
                             kb[materia_nome][topico] += f"\n\n--- NOVO MATERIAL ADICIONADO ---\n\n{novo_conteudo}"
                         else:
-                            # Se é um assunto novo, apenas cria
                             kb[materia_nome][topico] = novo_conteudo
                             
                     save_knowledge_base(kb)
@@ -458,7 +448,6 @@ if menu == "📖 Base de Conhecimento":
         else:
             st.warning("Preencha o nome da matéria e insira o PDF.")
 
-    # --- VISUALIZAÇÃO E EDIÇÃO ---
     st.markdown("---")
     st.subheader("2. Explorar e Editar Base")
     kb = load_knowledge_base()
@@ -468,7 +457,6 @@ if menu == "📖 Base de Conhecimento":
         if materia_selecionada:
             topicos = kb[materia_selecionada]
             
-            # Adicionar novo tópico manualmente
             with st.expander("➕ Adicionar Assunto Manualmente"):
                 novo_nome = st.text_input("Nome do novo assunto")
                 novo_conteudo = st.text_area("Conteúdo base do assunto")
@@ -482,7 +470,6 @@ if menu == "📖 Base de Conhecimento":
             st.write(f"### Assuntos Cadastrados em {materia_selecionada}")
             for topico, conteudo in topicos.items():
                 with st.expander(f"📚 {topico}"):
-                    # Área de texto editável para o conteúdo
                     conteudo_editado = st.text_area("Texto Base (Edite se quiser adicionar suas próprias anotações):", 
                                                     value=conteudo, height=200, 
                                                     key=f"edit_{materia_selecionada}_{topico}")
@@ -507,6 +494,51 @@ if menu == "📖 Base de Conhecimento":
                 shutil.copy(caminho_backup, "base_conhecimento.json")
                 st.rerun()
 
+elif menu == "🗣️ Dicionário Fonético":
+    st.header("🗣️ Dicionário Fonético (Correção de Pronúncia)")
+    st.markdown("Cadastre siglas ou palavras que a IA está pronunciando errado. Antes de gerar o áudio, o sistema substituirá automaticamente a palavra pela forma escrita aqui.")
+    
+    dic_path = "dicionario_fonetico.json"
+    try:
+        with open(dic_path, "r", encoding="utf-8") as f:
+            dic_fonetico = json.load(f)
+    except:
+        dic_fonetico = {}
+
+    st.subheader("➕ Adicionar Nova Pronúncia")
+    with st.form("form_add_dic"):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            nova_orig = st.text_input("Palavra Original (ex: INSS)")
+        with col_b:
+            nova_fon = st.text_input("Como a IA deve ler (ex: I-êni-éssi-éssi)")
+            
+        submitted = st.form_submit_button("Adicionar Regra")
+        if submitted:
+            if nova_orig and nova_fon:
+                dic_fonetico[nova_orig] = nova_fon
+                with open(dic_path, "w", encoding="utf-8") as f:
+                    json.dump(dic_fonetico, f, ensure_ascii=False, indent=4)
+                st.success(f"Regra adicionada: {nova_orig} ➔ {nova_fon}")
+                st.rerun()
+            else:
+                st.warning("Preencha ambos os campos.")
+
+    st.markdown("---")
+    st.subheader("📋 Regras Atuais")
+    if not dic_fonetico:
+        st.info("Nenhuma regra fonética cadastrada.")
+    else:
+        for k, v in list(dic_fonetico.items()):
+            c1, c2, c3 = st.columns([2, 2, 1])
+            c1.text_input("Original", value=k, key=f"orig_{k}", disabled=True)
+            c2.text_input("Fonética", value=v, key=f"fon_{k}", disabled=True)
+            if c3.button("🗑️ Remover", key=f"del_dic_{k}"):
+                del dic_fonetico[k]
+                with open(dic_path, "w", encoding="utf-8") as f:
+                    json.dump(dic_fonetico, f, ensure_ascii=False, indent=4)
+                st.rerun()
+
 elif menu == "📁 Gerenciador de Mídias":
     st.header("Gerenciador por Disciplinas")
     nova_disciplina = st.text_input("Nova Disciplina")
@@ -526,7 +558,7 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
     if not kb:
         st.warning("Vá na Base de Conhecimento e cadastre ou adicione materiais primeiro!")
     else:
-        modo_geracao = st.radio("Modo de Geração", ["Individual", "Em Massa (Automático)"], horizontal=True)
+        modo_geracao = st.radio("Modo de Geração", ["Individual", "Em Massa (Automático)", "Responda uma Pergunta (Q&A)"], horizontal=True)
         
         materia_selecionada = st.selectbox("Qual Matéria?", list(kb.keys()))
         topicos = list(kb[materia_selecionada].keys())
@@ -537,7 +569,6 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
             if modo_geracao == "Individual":
                 topico_selecionado = st.selectbox("Qual Assunto Base?", topicos)
                 foco_especifico = st.text_input("Qual o foco específico? (Ex: Foco em Jurisprudência, Decisões Recentes) - Opcional")
-                
                 texto_base = kb[materia_selecionada][topico_selecionado]
                 
                 if st.button("Gerar Estrutura (JSON)"):
@@ -581,7 +612,6 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                         '''
                         try:
                             roteiro_texto = chamar_gemini_com_retry(prompt)
-                            
                             nome_limpo = re.sub(r'[^\w\-]', '_', topico_selecionado).lower()
                             caminho_salvar = os.path.join("roteiros", f"roteiro_{nome_limpo}.json")
                             
@@ -593,14 +623,13 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                         except Exception as e:
                             st.error(f"Erro no Gemini: {e}")
                             
-            else: # Em Massa (Automático)
+            elif modo_geracao == "Em Massa (Automático)":
                 st.info(f"A matéria **{materia_selecionada}** possui **{len(topicos)}** assuntos estruturados.")
                 qtd_roteiros = st.slider("Quantos roteiros deseja gerar em sequência?", 1, len(topicos), min(3, len(topicos)))
                 foco_especifico = st.text_input("Qual o foco específico para todos? (Ex: Linguagem para o Cliente Final) - Opcional")
                 
                 if st.button(f"🚀 Gerar {qtd_roteiros} Roteiros Automaticamente"):
                     topicos_selecionados = random.sample(topicos, qtd_roteiros)
-                    
                     barra_progresso = st.progress(0)
                     texto_status = st.empty()
                     
@@ -645,22 +674,70 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                         Texto base extraído do material:
                         {texto_base}
                         '''
-                        
                         try:
                             roteiro_texto_massa = chamar_gemini_com_retry(prompt_massa)
-                            
                             nome_limpo = re.sub(r'[^\w\-]', '_', topico).lower()
                             caminho_salvar = os.path.join("roteiros", f"roteiro_{nome_limpo}.json")
-                            
                             with open(caminho_salvar, 'w', encoding='utf-8') as f:
                                 f.write(roteiro_texto_massa)
-                                
                         except Exception as e:
                             st.error(f"Erro ao gerar o tópico '{topico}': {e}")
                             
                         barra_progresso.progress((idx + 1) / qtd_roteiros)
                         
                     texto_status.success(f"✅ Geração concluída! {qtd_roteiros} novos roteiros foram adicionados à pasta.")
+
+            elif modo_geracao == "Responda uma Pergunta (Q&A)":
+                topico_selecionado = st.selectbox("Selecione o Assunto Base para a resposta:", topicos)
+                pergunta_usuario = st.text_area("Digite a pergunta do cliente/seguidor:", "Ex: Doutora, com 15 anos de contribuição consigo me aposentar?")
+                texto_base = kb[materia_selecionada][topico_selecionado]
+                
+                if st.button("Gerar Estrutura Q&A (JSON)"):
+                    with st.spinner("Criando roteiro focado na pergunta..."):
+                        prompt_qa = f'''
+                        Você é uma advogada especialista e altamente requisitada, criando roteiros para vídeos curtos (Shorts/Reels/TikTok). 
+                        Sua persona: Você tem uma voz calma, serena e é extremamente didática. Você passa muita autoridade técnica de forma acessível e profissional.
+                        
+                        Abaixo está uma pergunta de um seguidor/cliente e o texto base (doutrina/lei) que contém a resposta.
+                        
+                        Pergunta do Seguidor: "{pergunta_usuario}"
+                        
+                        DIRETRIZES DE TOM DE VOZ E FLUIDEZ:
+                        - O roteiro OBRIGATORIAMENTE deve começar lendo/citando a pergunta de forma natural (Ex: "Recebi essa dúvida aqui: Doutora, com...").
+                        - Logo em seguida, responda a pergunta usando os dados técnicos do 'Texto base'.
+                        - Fale de forma pausada, segura e didática.
+                        - Transforme a resposta em uma explicação clara e direta para o público final ou para outros advogados.
+                        
+                        A saída DEVE ser estritamente em JSON, seguindo a estrutura abaixo.
+                        Na chave 'palavras_chave', extraia uma QUANTIDADE MASSIVA de termos importantes (MÁXIMO DE 3 PALAVRAS POR TERMO). 
+                        Eu preciso de uma ALTA DENSIDADE de palavras-chave.
+                        ATENÇÃO: NUNCA coloque os conectivos conversacionais nas palavras-chave.
+                        
+                        - 'inicio_porcentagem': Quando a palavra aparece (0.0 a 1.0)
+                        - 'fim_porcentagem': Quando ela desaparece (0.0 a 1.0)
+                        
+                        {{
+                          "roteiro_falado": "Recebi essa dúvida aqui: [lê a pergunta]. Bom, a resposta é... [Texto completo explicativo]",
+                          "palavras_chave": [
+                            {{"texto": "TERMO TÉCNICO", "inicio_porcentagem": 0.05, "fim_porcentagem": 0.15}}
+                          ]
+                        }}
+                        
+                        Texto base extraído do material:
+                        {texto_base}
+                        '''
+                        try:
+                            roteiro_texto_qa = chamar_gemini_com_retry(prompt_qa)
+                            nome_limpo = re.sub(r'[^\w\-]', '_', topico_selecionado).lower() + "_qa"
+                            caminho_salvar = os.path.join("roteiros", f"roteiro_{nome_limpo}.json")
+                            
+                            with open(caminho_salvar, 'w', encoding='utf-8') as f:
+                                f.write(roteiro_texto_qa)
+                                
+                            st.success("Roteiro Q&A Gerado com Sucesso! (Você pode editá-lo abaixo)")
+                            st.json(json.loads(roteiro_texto_qa))
+                        except Exception as e:
+                            st.error(f"Erro no Gemini: {e}")
 
     st.markdown("---")
     st.subheader("✏️ 2. Editar Roteiros Gerados")
@@ -677,7 +754,6 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                 with open(caminho_roteiro_salvo, 'r', encoding='utf-8') as file:
                     conteudo_json_atual = file.read()
                 
-                # Exibe a caixa de texto grande com o JSON para edição
                 novo_conteudo_json = st.text_area(
                     "Edite o JSON do roteiro (Atenção: Mantenha a estrutura JSON correta):", 
                     value=conteudo_json_atual, 
@@ -685,16 +761,11 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                     key=f"edit_json_{roteiro_file}"
                 )
                 
-                # Botão de salvar para cada roteiro
                 if st.button("💾 Salvar Alterações", key=f"btn_salvar_{roteiro_file}"):
                     try:
-                        # Tenta carregar o texto editado para garantir que o formato JSON não foi quebrado
                         json_valido = json.loads(novo_conteudo_json)
-                        
-                        # Salva de volta no arquivo
                         with open(caminho_roteiro_salvo, 'w', encoding='utf-8') as file:
                             json.dump(json_valido, file, ensure_ascii=False, indent=4)
-                            
                         st.success(f"✅ O roteiro **{roteiro_file}** foi salvo com sucesso!")
                     except json.JSONDecodeError as e:
                         st.error(f"❌ Erro de Formatação JSON: As chaves ou vírgulas estão erradas. O arquivo não foi salvo. Detalhe do erro: {e}")
@@ -877,7 +948,6 @@ elif menu == "🎬 Renderizador Individual":
     else:
         roteiro_selecionado = st.selectbox("Selecione o Roteiro para Renderizar", roteiros)
         
-        # Se o usuário trocar de roteiro, nós limpamos a memória dos áudios antigos
         if st.session_state['roteiro_ativo'] != roteiro_selecionado:
             st.session_state['opcoes_audio'] = []
             st.session_state['roteiro_ativo'] = roteiro_selecionado
@@ -916,7 +986,6 @@ elif menu == "🎬 Renderizador Individual":
                     st.session_state['opcoes_audio'] = novos_audios
                     st.rerun()
 
-        # Exibição dos Players caso os áudios existam no cache da sessão
         audios_gerados = st.session_state['opcoes_audio']
         
         if audios_gerados:
@@ -959,7 +1028,6 @@ elif menu == "🎬 Renderizador Individual":
                         os.rename(caminho_roteiro, os.path.join("roteiros/feitos", roteiro_selecionado))
                         st.success(f"🎉 Vídeo gerado com sucesso: {video_path}")
                         
-                        # Limpamos a memória e apagamos os arquivos .mp3 temporários que foram descartados
                         for idx, temp_file in enumerate(audios_gerados):
                             if idx != (escolha - 1) and os.path.exists(temp_file):
                                 os.remove(temp_file)
@@ -1037,7 +1105,6 @@ elif menu == "🏭 Renderização em Massa":
                         except Exception as e:
                             st.error(f"Erro durante a renderização: {e}")
                             
-                        # Limpeza de memória
                         gc.collect()
                     else:
                         st.error(f"❌ Falha no Fish Audio: {erro}")
