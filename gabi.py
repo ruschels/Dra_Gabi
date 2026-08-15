@@ -1,5 +1,5 @@
 import streamlit as st
-import os, json, math, random, re
+import os, json, math, random, re, shutil, time
 import PIL
 from PIL import Image, ImageDraw, ImageFont
 
@@ -36,8 +36,8 @@ if 'opcoes_audio' not in st.session_state:
 if 'roteiro_ativo' not in st.session_state:
     st.session_state['roteiro_ativo'] = None
 
-# Criamos a pasta 'fonts' aqui junto com as outras
-PASTAS = ["base_conhecimento_pdfs", "banco_de_midias", "roteiros/feitos", "output", "assets", "Fundos", "fonts"]
+# Criamos a pasta 'fonts' e 'backup_conhecimento' aqui junto com as outras
+PASTAS = ["base_conhecimento_pdfs", "banco_de_midias", "roteiros/feitos", "output", "assets", "Fundos", "fonts", "backup_conhecimento"]
 for p in PASTAS:
     os.makedirs(p, exist_ok=True)
 
@@ -49,6 +49,44 @@ for json_file in ["base_conhecimento.json", "dicionario_fonetico.json", "vozes_s
 # ==========================================
 # FUNÇÕES AUXILIARES
 # ==========================================
+def chamar_gemini_com_retry(prompt, max_tentativas_por_modelo=3, delay_segundos=4):
+    """
+    Tenta acessar a IA usando uma lista de modelos (fallback). 
+    Se a versão latest estiver sobrecarregada, pula para versões específicas com menos demanda.
+    """
+    modelos_fallback = [
+        MODELO_GEMINI,               # Principal: gemini-flash-latest
+        "gemini-3.6-flash",          # Fallback 1: Acesso direto à versão 3.6 (rápida e eficiente)
+        "gemini-1.5-flash-002",      # Fallback 2: Versão estável anterior
+        "gemini-1.5-flash-8b"        # Fallback 3: Modelo mais leve e rápido do Google
+    ]
+    
+    client = genai.Client(api_key=API_GEMINI)
+    
+    for modelo in modelos_fallback:
+        for tentativa in range(max_tentativas_por_modelo):
+            try:
+                response = client.models.generate_content(
+                    model=modelo,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
+                )
+                return response.text
+            except Exception as e:
+                erro_str = str(e)
+                # Falha temporária (Sobrecarga)
+                if "503" in erro_str or "429" in erro_str:
+                    if tentativa < max_tentativas_por_modelo - 1:
+                        time.sleep(delay_segundos)
+                        continue
+                    else:
+                        break # Esgotou as tentativas neste modelo, vai tentar o próximo modelo da lista
+                else:
+                    # Erro grave (como prompt bloqueado ou chave errada), encerra imediatamente
+                    raise e
+                    
+    raise Exception(f"Falha de conexão. O Google limitou os acessos aos modelos: {modelos_fallback}. Tente novamente mais tarde.")
+
 def extract_text_from_pdf(pdf_path):
     reader = PdfReader(pdf_path)
     text = ""
@@ -383,13 +421,8 @@ if menu == "📖 Base de Conhecimento":
                 {texto_completo[:100000]}
                 """
                 try:
-                    client = genai.Client(api_key=API_GEMINI)
-                    response = client.models.generate_content(
-                        model=MODELO_GEMINI,
-                        contents=prompt_estruturacao,
-                        config=types.GenerateContentConfig(response_mime_type="application/json"),
-                    )
-                    topicos_extraidos = json.loads(response.text)
+                    resultado_json_texto = chamar_gemini_com_retry(prompt_estruturacao)
+                    topicos_extraidos = json.loads(resultado_json_texto)
                     
                     kb = load_knowledge_base()
                     if materia_nome not in kb:
@@ -453,6 +486,13 @@ if menu == "📖 Base de Conhecimento":
                             st.rerun()
     else:
         st.info("A base de conhecimento está vazia. Cadastre sua primeira matéria enviando um PDF.")
+        
+        caminho_backup = os.path.join("backup_conhecimento", "base_conhecimento.json")
+        if os.path.exists(caminho_backup):
+            st.markdown("---")
+            if st.button("🔄 Recuperar arquivo da pasta backup_conhecimento"):
+                shutil.copy(caminho_backup, "base_conhecimento.json")
+                st.rerun()
 
 elif menu == "📁 Gerenciador de Mídias":
     st.header("Gerenciador por Disciplinas")
@@ -508,7 +548,7 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
 
                         A saída DEVE ser estritamente em JSON, seguindo a estrutura abaixo.
                         Na chave 'palavras_chave', extraia uma QUANTIDADE MASSIVA de termos importantes (MÁXIMO DE 3 PALAVRAS POR TERMO). 
-                        Eu preciso de uma ALTA DENSIDADE de palavras-chave, extraindo termos de practically todas as frases. O objetivo é ter muita coisa acontecendo na tela para deixar a edição extremamente dinâmica e acelerada.
+                        Eu preciso de uma ALTA DENSIDADE de palavras-chave, extraindo termos de praticamente todas as frases. O objetivo é ter muita coisa acontecendo na tela para deixar a edição extremamente dinâmica e acelerada.
                         ATENÇÃO: NUNCA coloque os conectivos conversacionais nas palavras-chave.
                         
                         - 'inicio_porcentagem': Quando a palavra aparece (0.0 a 1.0)
@@ -526,13 +566,7 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                         {texto_base}
                         '''
                         try:
-                            client = genai.Client(api_key=API_GEMINI)
-                            response = client.models.generate_content(
-                                model=MODELO_GEMINI,
-                                contents=prompt,
-                                config=types.GenerateContentConfig(response_mime_type="application/json"),
-                            )
-                            roteiro_json = response.text
+                            roteiro_json = chamar_gemini_com_retry(prompt)
                             
                             nome_limpo = re.sub(r'[^\w\-]', '_', topico_selecionado).lower()
                             caminho_salvar = os.path.join("roteiros", f"roteiro_{nome_limpo}.json")
@@ -599,19 +633,13 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                         '''
                         
                         try:
-                            client = genai.Client(api_key=API_GEMINI)
-                            response = client.models.generate_content(
-                                model=MODELO_GEMINI,
-                                contents=prompt_massa,
-                                config=types.GenerateContentConfig(response_mime_type="application/json"),
-                            )
-                            roteiro_json = response.text
+                            roteiro_json_massa = chamar_gemini_com_retry(prompt_massa)
                             
                             nome_limpo = re.sub(r'[^\w\-]', '_', topico).lower()
                             caminho_salvar = os.path.join("roteiros", f"roteiro_{nome_limpo}.json")
                             
                             with open(caminho_salvar, 'w', encoding='utf-8') as f:
-                                f.write(roteiro_json)
+                                f.write(roteiro_json_massa)
                                 
                         except Exception as e:
                             st.error(f"Erro ao gerar o tópico '{topico}': {e}")
@@ -668,13 +696,8 @@ elif menu == "🃏 Gerador de Flashcards":
                     '''
                     
                     try:
-                        client = genai.Client(api_key=API_GEMINI)
-                        response = client.models.generate_content(
-                            model=MODELO_GEMINI,
-                            contents=prompt_flashcards,
-                            config=types.GenerateContentConfig(response_mime_type="application/json"),
-                        )
-                        flashcards_json = json.loads(response.text)
+                        flashcards_texto = chamar_gemini_com_retry(prompt_flashcards)
+                        flashcards_json = json.loads(flashcards_texto)
                         
                         st.success("Flashcards gerados com sucesso! Passe o mouse sobre os cartões para virar.")
                         
@@ -1022,3 +1045,13 @@ elif menu == "💾 Backup e Restauração":
             with open("base_conhecimento.json", "wb") as f:
                 f.write(uploaded_json.getbuffer())
             st.success("✅ Base de conhecimento restaurada com sucesso! Você já pode voltar a gerar roteiros.")
+            
+    st.markdown("---")
+    st.subheader("3. Restaurar Local (Pasta Backup)")
+    caminho_backup_local = os.path.join("backup_conhecimento", "base_conhecimento.json")
+    if os.path.exists(caminho_backup_local):
+        if st.button("🔄 Restaurar da pasta backup_conhecimento"):
+            shutil.copy(caminho_backup_local, "base_conhecimento.json")
+            st.success("✅ Base de conhecimento restaurada com sucesso a partir da pasta local!")
+    else:
+        st.info("Nenhum arquivo 'base_conhecimento.json' encontrado na pasta 'backup_conhecimento'.")
