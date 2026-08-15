@@ -28,6 +28,14 @@ MODELO_GEMINI = "gemini-flash-latest"
 
 st.set_page_config(page_title="AutoTube Advocacia - Gabi", layout="wide", page_icon="⚖️")
 
+# ==========================================
+# GERENCIAMENTO DE ESTADO (SESSÃO)
+# ==========================================
+if 'opcoes_audio' not in st.session_state:
+    st.session_state['opcoes_audio'] = []
+if 'roteiro_ativo' not in st.session_state:
+    st.session_state['roteiro_ativo'] = None
+
 # Criamos a pasta 'fonts' aqui junto com as outras
 PASTAS = ["base_conhecimento_pdfs", "banco_de_midias", "roteiros/feitos", "output", "assets", "Fundos", "fonts"]
 for p in PASTAS:
@@ -500,7 +508,7 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
 
                         A saída DEVE ser estritamente em JSON, seguindo a estrutura abaixo.
                         Na chave 'palavras_chave', extraia uma QUANTIDADE MASSIVA de termos importantes (MÁXIMO DE 3 PALAVRAS POR TERMO). 
-                        Eu preciso de uma ALTA DENSIDADE de palavras-chave, extraindo termos de praticamente todas as frases. O objetivo é ter muita coisa acontecendo na tela para deixar a edição extremamente dinâmica e acelerada.
+                        Eu preciso de uma ALTA DENSIDADE de palavras-chave, extraindo termos de practically todas as frases. O objetivo é ter muita coisa acontecendo na tela para deixar a edição extremamente dinâmica e acelerada.
                         ATENÇÃO: NUNCA coloque os conectivos conversacionais nas palavras-chave.
                         
                         - 'inicio_porcentagem': Quando a palavra aparece (0.0 a 1.0)
@@ -797,52 +805,100 @@ elif menu == "🎬 Renderizador Individual":
     else:
         roteiro_selecionado = st.selectbox("Selecione o Roteiro para Renderizar", roteiros)
         
-        if st.button("🚀 Renderizar Vídeo Selecionado"):
-            with st.spinner(f"Renderizando {roteiro_selecionado}..."):
+        # Se o usuário trocar de roteiro, nós limpamos a memória dos áudios antigos
+        if st.session_state['roteiro_ativo'] != roteiro_selecionado:
+            st.session_state['opcoes_audio'] = []
+            st.session_state['roteiro_ativo'] = roteiro_selecionado
+        
+        st.markdown("### Etapa 1: Geração de Áudio (Revisão)")
+        if st.button("🎧 Gerar 3 Opções de Áudio"):
+            with st.spinner("Gerando as 3 versões de locução..."):
                 caminho_roteiro = os.path.join("roteiros", roteiro_selecionado)
                 with open(caminho_roteiro, 'r', encoding='utf-8') as f:
                     dados = json.loads(f.read())
+                
                 dicionario_global = {}
                 try:
                     with open("dicionario_fonetico.json", 'r', encoding='utf-8') as f:
                         dicionario_global = json.load(f)
                 except: pass
-                    
-                st.info(f"Gerando áudio via Fish Audio TTS ({voz_selecionada})...")
-                audio_path = os.path.join("output", roteiro_selecionado.replace('.json', '.mp3'))
                 
-                caminho_gerado, erro = gerar_audio_fishaudio(
-                    texto=dados['roteiro_falado'],
-                    dicionario_global=dicionario_global,
-                    output_path=audio_path,
-                    api_key=API_FISH,
-                    voice_id=voice_id_selecionado 
-                )
-                
-                if caminho_gerado and os.path.exists(caminho_gerado):
-                    st.info("Sincronizando tempos com Deepgram ASR...")
+                novos_audios = []
+                for i in range(1, 4):
+                    audio_path = os.path.join("output", f"temp_op{i}_{roteiro_selecionado.replace('.json', '.mp3')}")
                     
-                    deepgram_words, erro_asr = obter_timestamps_deepgram(caminho_gerado, API_DEEPGRAM)
+                    caminho_gerado, erro = gerar_audio_fishaudio(
+                        texto=dados['roteiro_falado'],
+                        dicionario_global=dicionario_global,
+                        output_path=audio_path,
+                        api_key=API_FISH,
+                        voice_id=voice_id_selecionado 
+                    )
+                    
+                    if caminho_gerado:
+                        novos_audios.append(caminho_gerado)
+                    else:
+                        st.error(f"Erro ao gerar a Opção {i}: {erro}")
+                        
+                if len(novos_audios) > 0:
+                    st.session_state['opcoes_audio'] = novos_audios
+                    st.rerun()
+
+        # Exibição dos Players caso os áudios existam no cache da sessão
+        audios_gerados = st.session_state['opcoes_audio']
+        
+        if audios_gerados:
+            st.markdown("---")
+            st.markdown("### Etapa 2: Escolha e Renderização")
+            st.info("Ouça as 3 versões geradas e selecione a que apresentar a melhor naturalidade e entonação.")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.write("**Opção 1**")
+                if len(audios_gerados) >= 1: st.audio(audios_gerados[0])
+            with col2:
+                st.write("**Opção 2**")
+                if len(audios_gerados) >= 2: st.audio(audios_gerados[1])
+            with col3:
+                st.write("**Opção 3**")
+                if len(audios_gerados) >= 3: st.audio(audios_gerados[2])
+                
+            escolha = st.radio("Qual opção devemos usar para o vídeo?", [1, 2, 3], horizontal=True)
+            
+            if st.button("🎬 Aprovar Áudio e Renderizar Vídeo"):
+                audio_aprovado = audios_gerados[escolha - 1]
+                
+                with st.spinner("Sincronizando tempos com Deepgram e aplicando motor de vídeo..."):
+                    caminho_roteiro = os.path.join("roteiros", roteiro_selecionado)
+                    with open(caminho_roteiro, 'r', encoding='utf-8') as f:
+                        dados = json.loads(f.read())
+                        
+                    deepgram_words, erro_asr = obter_timestamps_deepgram(audio_aprovado, API_DEEPGRAM)
                     
                     if erro_asr:
                         st.warning(f"Falha na API Deepgram. Usando tempos estimados. Motivo: {erro_asr}")
                     else:
                         st.success("Palavras mapeadas com sucesso! Aplicando timestamps precisos.")
 
-                    st.info("Aplicando motor visual customizado...")
                     video_path = os.path.join("output", roteiro_selecionado.replace('.json', '.mp4'))
                     
                     try:
-                        render_keyword_video(dados, caminho_gerado, video_path, configuracoes_visuais, deepgram_words)
+                        render_keyword_video(dados, audio_aprovado, video_path, configuracoes_visuais, deepgram_words)
                         os.rename(caminho_roteiro, os.path.join("roteiros/feitos", roteiro_selecionado))
                         st.success(f"🎉 Vídeo gerado com sucesso: {video_path}")
+                        
+                        # Limpamos a memória e apagamos os arquivos .mp3 temporários que foram descartados
+                        for idx, temp_file in enumerate(audios_gerados):
+                            if idx != (escolha - 1) and os.path.exists(temp_file):
+                                os.remove(temp_file)
+                        
+                        st.session_state['opcoes_audio'] = []
+                        st.session_state['roteiro_ativo'] = None
+                        
                     except Exception as e:
                         st.error(f"Erro durante a renderização: {e}")
                         
-                    # Limpeza de memória
                     gc.collect()
-                else:
-                    st.error(f"❌ Falha no Fish Audio: {erro}")
 
 elif menu == "🏭 Renderização em Massa":
     st.header(menu)
