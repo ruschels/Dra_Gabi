@@ -37,7 +37,7 @@ if 'roteiro_ativo' not in st.session_state:
     st.session_state['roteiro_ativo'] = None
 
 # Criamos a pasta 'fonts' e 'backup_conhecimento' aqui junto com as outras
-PASTAS = ["base_conhecimento_pdfs", "banco_de_midias", "roteiros/feitos", "output", "assets", "Fundos", "fonts", "backup_conhecimento"]
+PASTAS = ["base_conhecimento_pdfs", "banco_de_midias", "roteiros", "roteiros/feitos", "output", "assets", "Fundos", "fonts", "backup_conhecimento"]
 for p in PASTAS:
     os.makedirs(p, exist_ok=True)
 
@@ -51,41 +51,55 @@ for json_file in ["base_conhecimento.json", "dicionario_fonetico.json", "vozes_s
 # ==========================================
 def chamar_gemini_com_retry(prompt, max_tentativas_por_modelo=3, delay_segundos=4):
     """
-    Tenta acessar a IA usando uma lista de modelos (fallback). 
-    Se a versão latest estiver sobrecarregada, pula para versões específicas com menos demanda.
+    Tenta acessar a IA usando uma lista de modelos (fallback) e exibe logs visuais em tempo real.
     """
     modelos_fallback = [
         MODELO_GEMINI,               # Principal: gemini-flash-latest
-        "gemini-3.6-flash",          # Fallback 1: Acesso direto à versão 3.6 (rápida e eficiente)
+        "gemini-3.6-flash",          # Fallback 1: Versão específica
         "gemini-1.5-flash-002",      # Fallback 2: Versão estável anterior
         "gemini-1.5-flash-8b"        # Fallback 3: Modelo mais leve e rápido do Google
     ]
     
     client = genai.Client(api_key=API_GEMINI)
     
+    # Cria uma caixa reservada na tela do Streamlit para o log dinâmico
+    log_container = st.empty()
+    
     for modelo in modelos_fallback:
         for tentativa in range(max_tentativas_por_modelo):
+            # Atualiza o log visual em tempo real (fundo azul)
+            log_container.info(f"🔄 Tentando conectar ao modelo: **{modelo}** (Tentativa {tentativa + 1}/{max_tentativas_por_modelo})...")
+            
             try:
                 response = client.models.generate_content(
                     model=modelo,
                     contents=prompt,
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
+                
+                # Se der certo, substitui o log por uma mensagem de sucesso (fundo verde)
+                log_container.success(f"✅ Sucesso! O modelo **{modelo}** processou a requisição e retornou os dados.")
                 return response.text
+                
             except Exception as e:
                 erro_str = str(e)
-                # Falha temporária (Sobrecarga)
+                # Se for erro de demanda/sobrecarga (503 ou 429)
                 if "503" in erro_str or "429" in erro_str:
+                    log_container.warning(f"⚠️ **{modelo}** sobrecarregado. Aguardando {delay_segundos}s para tentar de novo...")
                     if tentativa < max_tentativas_por_modelo - 1:
                         time.sleep(delay_segundos)
                         continue
                     else:
-                        break # Esgotou as tentativas neste modelo, vai tentar o próximo modelo da lista
+                        break # Acabaram as tentativas, vai pular para o próximo modelo da lista
                 else:
-                    # Erro grave (como prompt bloqueado ou chave errada), encerra imediatamente
-                    raise e
+                    # Se for qualquer outro erro (ex: nome do modelo inválido), mostra o erro e pula para o próximo modelo
+                    log_container.error(f"❌ Erro no **{modelo}**: {erro_str[:80]}... Pulando para o próximo.")
+                    time.sleep(2) # Pausa rápida só para você conseguir ler o erro na tela
+                    break 
                     
-    raise Exception(f"Falha de conexão. O Google limitou os acessos aos modelos: {modelos_fallback}. Tente novamente mais tarde.")
+    # Se esgotar todos os modelos da lista
+    log_container.error("❌ Todos os modelos falharam. A rede da IA está completamente congestionada.")
+    raise Exception(f"Falha de conexão em todas as rotas. Tente novamente mais tarde.")
 
 def extract_text_from_pdf(pdf_path):
     reader = PdfReader(pdf_path)
@@ -398,7 +412,7 @@ if menu == "📖 Base de Conhecimento":
     
     # --- UPLOAD E EXTRAÇÃO ---
     st.subheader("1. Ingerir novo material (PDF)")
-    materia_nome = st.text_input("Nome da Matéria (ex: AFO, Contabilidade)")
+    materia_nome = st.text_input("Nome da Matéria (ex: Direito Previdenciário)")
     uploaded_file = st.file_uploader("Envie o PDF (A IA vai ler e separar por tópicos)", type="pdf")
     
     if st.button("Processar e Estruturar PDF"):
@@ -406,15 +420,14 @@ if menu == "📖 Base de Conhecimento":
             with st.spinner("Lendo PDF e estruturando tópicos com IA... Isso pode levar um minuto."):
                 texto_completo = extract_text_from_pdf(uploaded_file)
                 
-                # Pedimos pro Gemini fatiar o texto em Tópicos didáticos
                 prompt_estruturacao = f"""
-                Analise o texto abaixo retirado de um material de estudo de concurso público.
+                Analise o texto abaixo retirado de um material de estudo ou doutrina.
                 Extraia os principais tópicos e seus respectivos conteúdos detalhados.
                 Retorne estritamente um arquivo JSON onde as chaves são os Títulos dos Tópicos e os valores são os textos resumidos/estruturados de cada tópico.
                 Exemplo de formato esperado:
                 {{
-                    "Orçamento Público - Conceitos Iniciais": "Conteúdo explicativo detalhado...",
-                    "Princípios Orçamentários": "Conteúdo explicativo detalhado..."
+                    "Aposentadoria Especial - Conceitos Iniciais": "Conteúdo explicativo detalhado...",
+                    "Requisitos Legais e Jurisprudência": "Conteúdo explicativo detalhado..."
                 }}
                 
                 Texto:
@@ -441,7 +454,7 @@ if menu == "📖 Base de Conhecimento":
                     
                     st.success(f"{len(topicos_extraidos)} tópicos extraídos e salvos com sucesso!")
                 except Exception as e:
-                    st.error(f"Erro ao estruturar com IA: {e}")
+                    st.error(f"Erro ao estruturar com IA (Verifique a estabilidade da conexão): {e}")
         else:
             st.warning("Preencha o nome da matéria e insira o PDF.")
 
@@ -508,12 +521,12 @@ elif menu == "📁 Gerenciador de Mídias":
 elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
     st.header("Gerar Roteiros Virais com IA")
     
+    st.subheader("🤖 1. Criar Novos Roteiros")
     kb = load_knowledge_base()
     if not kb:
         st.warning("Vá na Base de Conhecimento e cadastre ou adicione materiais primeiro!")
     else:
         modo_geracao = st.radio("Modo de Geração", ["Individual", "Em Massa (Automático)"], horizontal=True)
-        st.markdown("---")
         
         materia_selecionada = st.selectbox("Qual Matéria?", list(kb.keys()))
         topicos = list(kb[materia_selecionada].keys())
@@ -523,40 +536,41 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
         else:
             if modo_geracao == "Individual":
                 topico_selecionado = st.selectbox("Qual Assunto Base?", topicos)
-                foco_especifico = st.text_input("Qual o foco específico? (Ex: Pegadinhas Cebraspe, Foco em exceções) - Opcional")
+                foco_especifico = st.text_input("Qual o foco específico? (Ex: Foco em Jurisprudência, Decisões Recentes) - Opcional")
                 
                 texto_base = kb[materia_selecionada][topico_selecionado]
                 
                 if st.button("Gerar Estrutura (JSON)"):
                     with st.spinner(f"Criando roteiro fluido sobre {topico_selecionado}..."):
                         prompt = f'''
-                        Você é um roteirista e professor especializado em vídeos curtos virais (Shorts/Reels/TikTok) para concurseiros de alto nível (área fiscal e controle).
-                        Com base no texto fornecido, crie um roteiro didático, dinâmico e MUITO FLUIDO de até 60 segundos sobre: '{topico_selecionado}'.
+                        Você é uma advogada especialista e altamente requisitada, criando roteiros para vídeos curtos (Shorts/Reels/TikTok). 
+                        Sua persona: Você tem uma voz calma, serena e é extremamente didática. Você passa muita autoridade técnica de forma acessível e profissional.
+                        Seu público-alvo: Principalmente outros advogados, estudantes de direito e potenciais clientes. NUNCA fale sobre provas, concursos ou concurseiros. O foco é a prática jurídica, o dia a dia do escritório e a resolução de problemas reais.
+
+                        Com base no texto fornecido, crie um roteiro explicativo, elegante e MUITO FLUIDO de até 60 segundos sobre: '{topico_selecionado}'.
                         Foco da abordagem (se houver): {foco_especifico}
                         
                         DIRETRIZES DE TOM DE VOZ E FLUIDEZ (MUITO IMPORTANTE):
-                        - O tom deve ser de uma conversa direta e informal com o aluno, como se você estivesse dando uma "dica de ouro" de bastidor.
-                        - Quebre a formalidade de textos acadêmicos ou leis.
-                        - OBRIGATORIAMENTE, utilize expressões de transição e ganchos conversacionais no início ou no meio das explicações. Use frases como:
-                          "Bom, então vamos lá..."
-                          "Não sei se você sabe, mas..."
-                          "Isso aqui parece besteira, mas muita gente erra na prova..."
-                          "Olha só..."
-                          "Bom, seguinte..."
-                          "Então, o que acontece é que..."
+                        - O tom deve ser de uma conversa entre colegas de profissão ou uma explicação clara para um cliente que busca os seus serviços.
+                        - Fale de forma pausada, segura e didática.
+                        - OBRIGATORIAMENTE, utilize expressões de transição e ganchos conversacionais elegantes. Use frases como:
+                          "Colega advogado, preste atenção neste detalhe..."
+                          "Muitos profissionais deixam passar essa regra..."
+                          "Uma situação muito comum na rotina do escritório é..."
+                          "Se você atua na prática previdenciária, já deve ter se deparado com..."
+                          "É muito comum o cliente chegar com a seguinte dúvida..."
                         - Vá direto ao ponto técnico logo após puxar a atenção com essas expressões.
 
                         A saída DEVE ser estritamente em JSON, seguindo a estrutura abaixo.
                         Na chave 'palavras_chave', extraia uma QUANTIDADE MASSIVA de termos importantes (MÁXIMO DE 3 PALAVRAS POR TERMO). 
-                        Eu preciso de uma ALTA DENSIDADE de palavras-chave, extraindo termos de praticamente todas as frases. O objetivo é ter muita coisa acontecendo na tela para deixar a edição extremamente dinâmica e acelerada.
+                        Eu preciso de uma ALTA DENSIDADE de palavras-chave.
                         ATENÇÃO: NUNCA coloque os conectivos conversacionais nas palavras-chave.
                         
                         - 'inicio_porcentagem': Quando a palavra aparece (0.0 a 1.0)
                         - 'fim_porcentagem': Quando ela desaparece (0.0 a 1.0)
-                        Mantenha um fluxo lógico para acompanhar a narração.
                         
                         {{
-                          "roteiro_falado": "Bom, seguinte... [Texto completo com tom fluido e conversacional]",
+                          "roteiro_falado": "Uma situação muito comum na rotina do escritório... [Texto completo com tom calmo e explicativo]",
                           "palavras_chave": [
                             {{"texto": "TERMO TÉCNICO", "inicio_porcentagem": 0.05, "fim_porcentagem": 0.15}}
                           ]
@@ -566,26 +580,25 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                         {texto_base}
                         '''
                         try:
-                            roteiro_json = chamar_gemini_com_retry(prompt)
+                            roteiro_texto = chamar_gemini_com_retry(prompt)
                             
                             nome_limpo = re.sub(r'[^\w\-]', '_', topico_selecionado).lower()
                             caminho_salvar = os.path.join("roteiros", f"roteiro_{nome_limpo}.json")
                             
                             with open(caminho_salvar, 'w', encoding='utf-8') as f:
-                                f.write(roteiro_json)
+                                f.write(roteiro_texto)
                                 
-                            st.success("Roteiro e Decupagem Gerados com Sucesso!")
-                            st.json(json.loads(roteiro_json))
+                            st.success("Roteiro e Decupagem Gerados com Sucesso! (Você pode editá-lo abaixo)")
+                            st.json(json.loads(roteiro_texto))
                         except Exception as e:
                             st.error(f"Erro no Gemini: {e}")
                             
             else: # Em Massa (Automático)
                 st.info(f"A matéria **{materia_selecionada}** possui **{len(topicos)}** assuntos estruturados.")
                 qtd_roteiros = st.slider("Quantos roteiros deseja gerar em sequência?", 1, len(topicos), min(3, len(topicos)))
-                foco_especifico = st.text_input("Qual o foco específico para todos? (Ex: Foco Cebraspe) - Opcional")
+                foco_especifico = st.text_input("Qual o foco específico para todos? (Ex: Linguagem para o Cliente Final) - Opcional")
                 
                 if st.button(f"🚀 Gerar {qtd_roteiros} Roteiros Automaticamente"):
-                    # Seleciona aleatoriamente a quantidade desejada de tópicos para não gerar sempre os mesmos
                     topicos_selecionados = random.sample(topicos, qtd_roteiros)
                     
                     barra_progresso = st.progress(0)
@@ -596,33 +609,34 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                         texto_base = kb[materia_selecionada][topico]
                         
                         prompt_massa = f'''
-                        Você é um roteirista e professor especializado em vídeos curtos virais (Shorts/Reels/TikTok) para concurseiros de alto nível (área fiscal e controle).
-                        Com base no texto fornecido, crie um roteiro didático, dinâmico e MUITO FLUIDO de até 60 segundos sobre: '{topico}'.
+                        Você é uma advogada especialista e altamente requisitada, criando roteiros para vídeos curtos (Shorts/Reels/TikTok). 
+                        Sua persona: Você tem uma voz calma, serena e é extremamente didática. Você passa muita autoridade técnica de forma acessível e profissional.
+                        Seu público-alvo: Principalmente outros advogados, estudantes de direito e potenciais clientes. NUNCA fale sobre provas, concursos ou concurseiros. O foco é a prática jurídica, o dia a dia do escritório e a resolução de problemas reais.
+
+                        Com base no texto fornecido, crie um roteiro explicativo, elegante e MUITO FLUIDO de até 60 segundos sobre: '{topico}'.
                         Foco da abordagem (se houver): {foco_especifico}
                         
                         DIRETRIZES DE TOM DE VOZ E FLUIDEZ (MUITO IMPORTANTE):
-                        - O tom deve ser de uma conversa direta e informal com o aluno, como se você estivesse dando uma "dica de ouro" de bastidor.
-                        - Quebre a formalidade de textos acadêmicos ou leis.
-                        - OBRIGATORIAMENTE, utilize expressões de transição e ganchos conversacionais no início ou no meio das explicações. Use frases como:
-                          "Bom, então vamos lá..."
-                          "Não sei se você sabe, mas..."
-                          "Isso aqui parece besteira, mas muita gente erra na prova..."
-                          "Olha só..."
-                          "Bom, seguinte..."
-                          "Então, o que acontece é que..."
+                        - O tom deve ser de uma conversa entre colegas de profissão ou uma explicação clara para um cliente que busca os seus serviços.
+                        - Fale de forma pausada, segura e didática.
+                        - OBRIGATORIAMENTE, utilize expressões de transição e ganchos conversacionais elegantes. Use frases como:
+                          "Colega advogado, preste atenção neste detalhe..."
+                          "Muitos profissionais deixam passar essa regra..."
+                          "Uma situação muito comum na rotina do escritório é..."
+                          "Se você atua na prática previdenciária, já deve ter se deparado com..."
+                          "É muito comum o cliente chegar com a seguinte dúvida..."
                         - Vá direto ao ponto técnico logo após puxar a atenção com essas expressões.
 
                         A saída DEVE ser estritamente em JSON, seguindo a estrutura abaixo.
                         Na chave 'palavras_chave', extraia uma QUANTIDADE MASSIVA de termos importantes (MÁXIMO DE 3 PALAVRAS POR TERMO). 
-                        Eu preciso de uma ALTA DENSIDADE de palavras-chave, extraindo termos de praticamente todas as frases. O objetivo é ter muita coisa acontecendo na tela para deixar a edição extremamente dinâmica e acelerada.
+                        Eu preciso de uma ALTA DENSIDADE de palavras-chave.
                         ATENÇÃO: NUNCA coloque os conectivos conversacionais nas palavras-chave.
                         
                         - 'inicio_porcentagem': Quando a palavra aparece (0.0 a 1.0)
                         - 'fim_porcentagem': Quando ela desaparece (0.0 a 1.0)
-                        Mantenha um fluxo lógico para acompanhar a narração.
                         
                         {{
-                          "roteiro_falado": "Bom, seguinte... [Texto completo com tom fluido e conversacional]",
+                          "roteiro_falado": "Uma situação muito comum na rotina do escritório... [Texto completo com tom calmo e explicativo]",
                           "palavras_chave": [
                             {{"texto": "TERMO TÉCNICO", "inicio_porcentagem": 0.05, "fim_porcentagem": 0.15}}
                           ]
@@ -633,21 +647,57 @@ elif menu == "✍️ Gerador de Roteiros (Palavras-chave)":
                         '''
                         
                         try:
-                            roteiro_json_massa = chamar_gemini_com_retry(prompt_massa)
+                            roteiro_texto_massa = chamar_gemini_com_retry(prompt_massa)
                             
                             nome_limpo = re.sub(r'[^\w\-]', '_', topico).lower()
                             caminho_salvar = os.path.join("roteiros", f"roteiro_{nome_limpo}.json")
                             
                             with open(caminho_salvar, 'w', encoding='utf-8') as f:
-                                f.write(roteiro_json_massa)
+                                f.write(roteiro_texto_massa)
                                 
                         except Exception as e:
                             st.error(f"Erro ao gerar o tópico '{topico}': {e}")
                             
-                        # Atualiza barra de progresso
                         barra_progresso.progress((idx + 1) / qtd_roteiros)
                         
                     texto_status.success(f"✅ Geração concluída! {qtd_roteiros} novos roteiros foram adicionados à pasta.")
+
+    st.markdown("---")
+    st.subheader("✏️ 2. Editar Roteiros Gerados")
+    st.markdown("Abaixo estão todos os roteiros já gerados no sistema. Você pode abri-los, alterar o texto da narração ou adicionar/remover palavras-chave antes de renderizar os vídeos.")
+
+    roteiros_salvos = [f for f in os.listdir("roteiros") if f.endswith('.json')]
+    
+    if not roteiros_salvos:
+        st.info("Nenhum roteiro disponível para edição no momento.")
+    else:
+        for roteiro_file in roteiros_salvos:
+            caminho_roteiro_salvo = os.path.join("roteiros", roteiro_file)
+            with st.expander(f"📄 {roteiro_file}"):
+                with open(caminho_roteiro_salvo, 'r', encoding='utf-8') as file:
+                    conteudo_json_atual = file.read()
+                
+                # Exibe a caixa de texto grande com o JSON para edição
+                novo_conteudo_json = st.text_area(
+                    "Edite o JSON do roteiro (Atenção: Mantenha a estrutura JSON correta):", 
+                    value=conteudo_json_atual, 
+                    height=300, 
+                    key=f"edit_json_{roteiro_file}"
+                )
+                
+                # Botão de salvar para cada roteiro
+                if st.button("💾 Salvar Alterações", key=f"btn_salvar_{roteiro_file}"):
+                    try:
+                        # Tenta carregar o texto editado para garantir que o formato JSON não foi quebrado
+                        json_valido = json.loads(novo_conteudo_json)
+                        
+                        # Salva de volta no arquivo
+                        with open(caminho_roteiro_salvo, 'w', encoding='utf-8') as file:
+                            json.dump(json_valido, file, ensure_ascii=False, indent=4)
+                            
+                        st.success(f"✅ O roteiro **{roteiro_file}** foi salvo com sucesso!")
+                    except json.JSONDecodeError as e:
+                        st.error(f"❌ Erro de Formatação JSON: As chaves ou vírgulas estão erradas. O arquivo não foi salvo. Detalhe do erro: {e}")
 
 elif menu == "🃏 Gerador de Flashcards":
     st.header("🃏 Gerador de Flashcards com IA")
@@ -666,9 +716,8 @@ elif menu == "🃏 Gerador de Flashcards":
             
             estilos_flashcard = {
                 "Direto ao Ponto (Conceito e Definição)": "Foco em perguntas diretas perguntando 'O que é...', 'Quais os requisitos...', etc. Respostas curtas e objetivas.",
-                "Verdadeiro ou Falso (Estilo Cebraspe)": "Crie afirmações que podem ser verdadeiras ou falsas. A resposta deve dizer se é Verdadeiro ou Falso e explicar brevemente o porquê.",
-                "Situação Prática (Estudo de Caso)": "Crie um cenário hipotético muito curto (1 ou 2 frases) e pergunte como a regra se aplica. A resposta deve resolver o caso de forma objetiva.",
-                "Preencha as Lacunas": "Forneça uma frase com uma ou mais palavras-chave fundamentais ocultadas (usando '___'). A resposta deve conter as palavras que faltam para completar o sentido."
+                "Situação Prática (Estudo de Caso Jurídico)": "Crie um cenário hipotético muito curto sobre um cliente e pergunte como a regra se aplica. A resposta deve resolver o caso.",
+                "Jurisprudência (Teses do STF/STJ)": "Pergunte qual é o entendimento dos tribunais superiores sobre o tema. A resposta deve trazer a tese consolidada de forma objetiva."
             }
             
             estilo_selecionado = st.selectbox("Qual o estilo dos Flashcards?", list(estilos_flashcard.keys()))
@@ -679,7 +728,7 @@ elif menu == "🃏 Gerador de Flashcards":
             if st.button("🧠 Gerar Flashcards"):
                 with st.spinner(f"Gerando {qtd_flashcards} flashcards no estilo '{estilo_selecionado}'..."):
                     prompt_flashcards = f'''
-                    Você é um professor especialista em criar material de revisão ativa (flashcards) para concursos públicos de alto nível.
+                    Você é um professor de direito especialista em criar material de revisão ativa (flashcards).
                     Baseado no texto fornecido abaixo, crie {qtd_flashcards} flashcards focados no tópico '{topico_selecionado}'.
                     
                     O estilo dos flashcards deve ser OBRIGATORIAMENTE este:
@@ -696,8 +745,8 @@ elif menu == "🃏 Gerador de Flashcards":
                     '''
                     
                     try:
-                        flashcards_texto = chamar_gemini_com_retry(prompt_flashcards)
-                        flashcards_json = json.loads(flashcards_texto)
+                        resultado_flashcards_texto = chamar_gemini_com_retry(prompt_flashcards)
+                        flashcards_json = json.loads(resultado_flashcards_texto)
                         
                         st.success("Flashcards gerados com sucesso! Passe o mouse sobre os cartões para virar.")
                         
